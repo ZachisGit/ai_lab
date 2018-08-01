@@ -14,8 +14,9 @@ class Augment2D(object):
 	# blur			=> 	smooth the image
 	# position_shift=>	move the image in x,y
 	# lab_shift		=>  changes brightness (lab color space, independent channels)
+	# contrast 		=>  changes the contrast of the image
 
-	def __init__(self,rotate_hard=True,rotate_soft=False,zoom=0.5,noise=0.5,pixel_shift=0.5,blur=0.5,position_shift=True,lab_shift=0.5):
+	def __init__(self,rotate_hard=True,rotate_soft=False,zoom=0.5,noise=0.5,pixel_shift=0.5,blur=0.5,position_shift=True,lab_shift=0.5,flip=True,contrast=0.5):
 		self.rotate_hard = rotate_hard
 		self.rotate_soft = rotate_soft
 		self.zoom=zoom
@@ -24,6 +25,8 @@ class Augment2D(object):
 		self.blur = blur
 		self.position_shift=position_shift
 		self.lab_shift=lab_shift
+		self.flip=flip
+		self.contrast=contrast
 
 	def augment(self,data,labels):
 
@@ -31,14 +34,17 @@ class Augment2D(object):
 		# lab_shift
 		# pixel_shift
 		# blur
+		# flip
+		# zoom
 		# rotate_hard
 		# rotate_soft
 		# noise
-		# zoom
 
 		if self.lab_shift > 0:	data,labels = self._lab_shift(data,labels) 
 		if self.pixel_shift > 0:	data,labels = self._pixel_shift(data,labels)
+		if self.contrast > 0:	data,labels = self._contrast(data,labels)
 		if self.blur > 0:	data,labels = self._blur(data,labels)
+		if self.flip:		data,labels = self._flip(data,labels)
 		if self.zoom > 0:	data,labels = self._zoom(data,labels)
 		if self.rotate_hard and self.rotate_soft==False:	data,labels = self._rotate_hard(data,labels)
 		if self.rotate_soft:	data,labels = self._rotate_soft(data,labels)
@@ -50,9 +56,10 @@ class Augment2D(object):
 	def _pixel_shift(self,data,labels):
 		for i in range(len(data)):
 			shift_variance = int(self.pixel_shift*32.0)
-			rgb = np.random.randint(-shift_variance,shift_variance,size=data[i].shape[-1]).astype(np.uint8)
+			rgb = np.random.randint(-shift_variance,shift_variance,size=data[i].shape[-1]).astype(int)
+			data[i] = data[i].astype(int)
 			data[i] += rgb
-			data[i] = np.clip(data[i],0,255)
+			data[i] = np.clip(data[i],0,255).astype(np.uint8)
 		return data,labels
 
 	def _blur(self,data,labels):
@@ -118,11 +125,43 @@ class Augment2D(object):
 			lab = cv2.cvtColor(data[i],cv2.COLOR_BGR2LAB)
 
 			shift_variance = int(self.lab_shift*32.0)
-			rgb_add = np.random.randint(-shift_variance,shift_variance,size=lab.shape[-1]).astype(np.uint8)
+			rgb_add = np.random.randint(-shift_variance,shift_variance,size=lab.shape[-1]).astype(int)
+			lab = lab.astype(int)
 			lab += rgb_add
-			lab = np.clip(lab,0,255)
+			lab = np.clip(lab,0,255).astype(np.uint8)
 
 			data[i] = cv2.cvtColor(lab,cv2.COLOR_LAB2BGR)
+		return data,labels
+
+
+	def _flip(self,data,labels):
+		for i in range(len(data)):
+			# 1/3 chance for flimlr,flipup,do-nothing
+			val = np.random.uniform()
+			# flip lr
+			if val < 1.0/3.0:
+				data[i] = np.fliplr(data[i])
+				labels[i] = np.fliplr(labels[i])
+			# flip ud
+			elif val < 2.0/3.0:
+				data[i] = np.flipud(data[i])
+				labels[i] = np.flipud(labels[i])
+
+		return data,labels
+
+	def _contrast(self,data,labels):
+		for i in range(len(data)):
+			contrast_value = np.random.uniform()
+			std = 0.5 * self.contrast
+			contrast_value *= std
+			contrast_value += 1-std
+			contrast_value = np.clip(2.0,0.1,contrast_value)
+
+			c_im = data[i].astype(np.float32)
+			c_im *= contrast_value
+			c_im = np.clip(255,0,c_im)
+			data[i] = c_im.astype(np.uint8)
+
 		return data,labels
 
 
@@ -136,3 +175,17 @@ class Augment2D(object):
 				if image.shape[-1] == 1:
 					return image.reshape(image.shape[:2])
 			return image
+
+	def cut_size_hard(self,data,labels,cut_perc=0.1):
+		for i in range(len(data)):
+			r,d,l,u = np.random.uniform(size=4)*cut_perc
+
+			height,width = data[i].shape[:2]
+			right = int(width * r)
+			down = int(height * d)
+			left = int(width * l)
+			up = int(height * u)
+
+			data[i] = data[i][up:height-down,left:width-right]
+			labels[i] = labels[i][up:height-down,left:width-right]
+		return data,labels
